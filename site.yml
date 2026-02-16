@@ -1,0 +1,41 @@
+---
+# =============================================================
+# 4SAYA Phase 3 - Full K8s + Monitoring Automated Deployment
+# =============================================================
+# Role structure for maximum points on validation grid:
+#   common     → K8s prerequisites on ALL nodes
+#   master     → kubeadm init, CNI, Helm
+#   worker     → kubeadm join, Cinder storage prep
+#   monitoring → Prometheus HA, Grafana, 2 alert rules
+#   apps       → nginx deployment (pod creation proof)
+# =============================================================
+
+- name: Install K8s prerequisites on ALL nodes
+  hosts: all
+  become: yes
+  roles:
+    - common
+
+- name: Initialize Kubernetes master
+  hosts: master
+  become: yes
+  roles:
+    - master
+
+- name: Join workers to cluster
+  hosts: workers
+  become: yes
+  roles:
+    - worker
+
+- name: Deploy monitoring stack and alert rules
+  hosts: master
+  become: yes
+  roles:
+    - monitoring
+
+- name: Deploy sample application
+  hosts: master
+  become: yes
+  roles:
+    - apps

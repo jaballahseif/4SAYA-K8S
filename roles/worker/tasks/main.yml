@@ -1,0 +1,67 @@
+---
+# Role: worker
+# Grid items: Worker node components (kubelet, kube-proxy, container runtime)
+# Joins workers to cluster + prepares Cinder volume for Prometheus storage
+
+- name: Check if already joined to cluster
+  stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: kubelet_conf
+
+- name: Get join command from master
+  slurp:
+    src: /tmp/k8s-join-command.sh
+  delegate_to: 10.0.1.10
+  run_once: false
+  register: join_cmd_raw
+  when: not kubelet_conf.stat.exists
+
+- name: Set join command fact
+  set_fact:
+    join_command: "{{ join_cmd_raw.content | b64decode | trim }}"
+  when: not kubelet_conf.stat.exists
+
+- name: Join the Kubernetes cluster
+  command: "{{ join_command }}"
+  when: not kubelet_conf.stat.exists
+
+# --- Prepare Cinder Volume for Prometheus ---
+- name: Check if Cinder volume /dev/vdb exists
+  stat:
+    path: /dev/vdb
+  register: cinder_disk
+
+- name: Check if /dev/vdb already has a filesystem
+  command: blkid /dev/vdb
+  register: blkid_check
+  failed_when: false
+  changed_when: false
+  when: cinder_disk.stat.exists
+
+- name: Format Cinder volume as ext4
+  command: mkfs.ext4 -F /dev/vdb
+  when:
+    - cinder_disk.stat.exists
+    - blkid_check.rc != 0
+
+- name: Create mount point for Prometheus data
+  file:
+    path: /mnt/prometheus-data
+    state: directory
+    mode: '0777'
+
+- name: Mount Cinder volume
+  mount:
+    path: /mnt/prometheus-data
+    src: /dev/vdb
+    fstype: ext4
+    state: mounted
+    opts: defaults
+  when: cinder_disk.stat.exists
+
+- name: Set permissions on Prometheus data directory
+  file:
+    path: /mnt/prometheus-data
+    state: directory
+    mode: '0777'
+    recurse: yes

@@ -1,0 +1,13 @@
+[master]
+10.0.1.10 ansible_connection=local
+
+[workers]
+10.0.1.11
+10.0.1.12
+
+[all:vars]
+ansible_user=ubuntu
+ansible_ssh_pass=password
+ansible_become=yes
+ansible_become_pass=password
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'

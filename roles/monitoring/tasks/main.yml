@@ -1,0 +1,175 @@
+---
+# Role: monitoring
+# Grid items: Monitoring on cluster (2 pts) + Alert cases (2 pts)
+# Deploys kube-prometheus-stack with HA Prometheus + Grafana + custom alerts
+
+# --- Wait for ALL 3 nodes to be Ready ---
+- name: Wait for all nodes to be Ready
+  shell: |
+    TOTAL=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
+    READY=$(kubectl get nodes --no-headers 2>/dev/null | grep -cw "Ready")
+    if [ "$TOTAL" -ge 3 ] && [ "$TOTAL" -eq "$READY" ]; then
+      exit 0
+    else
+      exit 1
+    fi
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: nodes_check
+  retries: 40
+  delay: 15
+  until: nodes_check.rc == 0
+
+- name: Show cluster status
+  command: kubectl get nodes -o wide
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: cluster_status
+
+- name: Display cluster
+  debug:
+    msg: "{{ cluster_status.stdout_lines }}"
+
+# --- Create namespace ---
+- name: Create monitoring namespace
+  command: kubectl create namespace monitoring
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: ns_create
+  failed_when: false
+  changed_when: "'created' in ns_create.stdout"
+
+# --- Create Persistent Volumes for Prometheus ---
+- name: Copy PV manifests to master
+  copy:
+    src: "{{ item }}"
+    dest: "/tmp/{{ item | basename }}"
+  loop:
+    - prometheus-pv-0.yml
+    - prometheus-pv-1.yml
+
+- name: Apply Prometheus PV for worker-1
+  command: kubectl apply -f /tmp/prometheus-pv-0.yml
+  environment:
+    KUBECONFIG: /root/.kube/config
+
+- name: Apply Prometheus PV for worker-2
+  command: kubectl apply -f /tmp/prometheus-pv-1.yml
+  environment:
+    KUBECONFIG: /root/.kube/config
+
+- name: Verify PVs created
+  command: kubectl get pv
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: pv_status
+
+- name: Show PVs
+  debug:
+    msg: "{{ pv_status.stdout_lines }}"
+
+# --- Install kube-prometheus-stack via Helm ---
+- name: Add Prometheus Helm repository
+  command: helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+  environment:
+    KUBECONFIG: /root/.kube/config
+  failed_when: false
+
+- name: Update Helm repositories
+  command: helm repo update
+  environment:
+    KUBECONFIG: /root/.kube/config
+
+- name: Check if monitoring is already installed
+  command: helm status monitoring -n monitoring
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: helm_check
+  failed_when: false
+
+- name: Install kube-prometheus-stack (Prometheus HA + Grafana)
+  shell: |
+    helm install monitoring prometheus-community/kube-prometheus-stack \
+      --namespace monitoring \
+      --set prometheus.prometheusSpec.replicas=2 \
+      --set prometheus.prometheusSpec.podAntiAffinity="hard" \
+      --set prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.storageClassName="manual" \
+      --set prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage="20Gi" \
+      --set 'prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.selector.matchLabels.app=prometheus-pv' \
+      --set grafana.service.type=NodePort \
+      --set grafana.service.nodePort=32000 \
+      --set grafana.adminPassword=admin \
+      --set alertmanager.service.type=NodePort \
+      --set alertmanager.service.nodePort=31000 \
+      --wait \
+      --timeout 10m
+  environment:
+    KUBECONFIG: /root/.kube/config
+  args:
+    executable: /bin/bash
+  when: helm_check.rc != 0
+
+# --- Wait for monitoring pods to be running ---
+- name: Wait for Prometheus pods
+  shell: |
+    kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | grep -c "Running"
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: prom_running
+  retries: 30
+  delay: 10
+  until: prom_running.stdout | int >= 1
+
+# --- Deploy Alert Rules (2 cases for grid) ---
+- name: Copy alert rules manifest
+  copy:
+    src: alert-rules.yml
+    dest: /tmp/alert-rules.yml
+
+- name: Apply custom alert rules
+  command: kubectl apply -f /tmp/alert-rules.yml
+  environment:
+    KUBECONFIG: /root/.kube/config
+
+- name: Verify alert rules
+  command: kubectl get prometheusrules -n monitoring
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: alert_rules
+
+- name: Show alert rules
+  debug:
+    msg: "{{ alert_rules.stdout_lines }}"
+
+# --- Copy stress test for demo ---
+- name: Copy stress test manifest for alert demo
+  copy:
+    src: stress-test.yml
+    dest: /home/ubuntu/stress-test.yml
+    owner: ubuntu
+    group: ubuntu
+    mode: '0644'
+
+# --- Show monitoring pods ---
+- name: Show all monitoring pods
+  command: kubectl get pods -n monitoring -o wide
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: mon_pods
+
+- name: Display monitoring pods
+  debug:
+    msg: "{{ mon_pods.stdout_lines }}"
+
+- name: Monitoring access info
+  debug:
+    msg:
+      - "=========================================="
+      - "  MONITORING DEPLOYED"
+      - "=========================================="
+      - "  Grafana:      http://<NODE_IP>:32000"
+      - "    User: admin  Pass: admin"
+      - "  Alertmanager: http://<NODE_IP>:31000"
+      - "=========================================="
+      - "  Alert demo: kubectl apply -f ~/stress-test.yml"
+      - "=========================================="

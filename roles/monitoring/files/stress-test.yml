@@ -1,0 +1,24 @@
+# ==============================================
+# STRESS TEST - Use during demo to trigger alerts
+# ==============================================
+# Apply:   kubectl apply -f stress-test.yml
+# Wait:    2-3 minutes for alert to fire
+# Check:   http://<NODE_IP>:31000 (Alertmanager)
+# Cleanup: kubectl delete -f stress-test.yml
+# ==============================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cpu-stress-test
+  namespace: default
+spec:
+  containers:
+    - name: stress
+      image: progrium/stress
+      command: ["stress"]
+      args: ["--cpu", "2", "--timeout", "300"]
+      resources:
+        requests:
+          cpu: "100m"
+        limits:
+          cpu: "2"

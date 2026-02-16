@@ -1,0 +1,123 @@
+---
+# Role: master
+# Grid items: Master node components (apiserver, etcd, scheduler, controller-manager)
+# Initializes K8s control plane, installs Flannel CNI, Helm
+
+- name: Check if cluster is already initialized
+  stat:
+    path: /etc/kubernetes/admin.conf
+  register: kubeadm_init_check
+
+- name: Reset kubeadm if previous failed attempt
+  command: kubeadm reset -f
+  when: not kubeadm_init_check.stat.exists
+  ignore_errors: yes
+
+- name: Initialize Kubernetes Master
+  command: >
+    kubeadm init
+    --apiserver-advertise-address=10.0.1.10
+    --pod-network-cidr=10.244.0.0/16
+    --node-name=k8s-master
+  when: not kubeadm_init_check.stat.exists
+  register: kubeadm_output
+
+- name: Show kubeadm init output
+  debug:
+    msg: "{{ kubeadm_output.stdout_lines | default(['Already initialized']) }}"
+
+# --- kubeconfig for root ---
+- name: Create .kube directory for root
+  file:
+    path: /root/.kube
+    state: directory
+    mode: '0755'
+
+- name: Copy admin.conf to root kubeconfig
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /root/.kube/config
+    remote_src: yes
+    mode: '0600'
+
+# --- kubeconfig for ubuntu user ---
+- name: Create .kube directory for ubuntu
+  file:
+    path: /home/ubuntu/.kube
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+
+- name: Copy admin.conf to ubuntu kubeconfig
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /home/ubuntu/.kube/config
+    remote_src: yes
+    owner: ubuntu
+    group: ubuntu
+    mode: '0600'
+
+# --- Install Flannel CNI ---
+- name: Download Flannel manifest
+  get_url:
+    url: https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+    dest: /tmp/kube-flannel.yml
+    mode: '0644'
+  environment:
+    KUBECONFIG: /root/.kube/config
+
+- name: Apply Flannel CNI
+  command: kubectl apply -f /tmp/kube-flannel.yml
+  environment:
+    KUBECONFIG: /root/.kube/config
+
+# --- Wait for master to be Ready ---
+- name: Wait for master node to be Ready
+  shell: kubectl get node k8s-master --no-headers 2>/dev/null | grep -w "Ready"
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: master_ready
+  retries: 30
+  delay: 10
+  until: master_ready.rc == 0
+
+- name: Show master node status
+  command: kubectl get nodes -o wide
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: nodes_status
+
+- name: Display nodes
+  debug:
+    msg: "{{ nodes_status.stdout_lines }}"
+
+# --- Generate join command for workers ---
+- name: Generate kubeadm join command
+  command: kubeadm token create --print-join-command
+  register: join_cmd
+
+- name: Save join command
+  copy:
+    content: "{{ join_cmd.stdout }}"
+    dest: /tmp/k8s-join-command.sh
+    mode: '0755'
+
+- name: Display join command
+  debug:
+    msg: "Join command: {{ join_cmd.stdout }}"
+
+# --- Install Helm 3 ---
+- name: Download Helm install script
+  get_url:
+    url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+    dest: /tmp/get_helm.sh
+    mode: '0755'
+
+- name: Install Helm
+  shell: /tmp/get_helm.sh
+  args:
+    executable: /bin/bash
+    creates: /usr/local/bin/helm
+  environment:
+    DESIRED_VERSION: v3.14.0

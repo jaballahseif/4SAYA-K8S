@@ -1,0 +1,59 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: custom-alert-rules
+  namespace: monitoring
+  labels:
+    release: monitoring
+    app: kube-prometheus-stack
+spec:
+  groups:
+    # ==============================================
+    # ALERT CASE 1: High CPU Usage (Node + Pod)
+    # ==============================================
+    - name: cpu-alerts
+      rules:
+        - alert: HighPodCPU
+          expr: |
+            sum(rate(container_cpu_usage_seconds_total{container!="", container!="POD"}[5m])) by (pod, namespace) > 0.5
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High CPU on pod {{ $labels.pod }}"
+            description: "Pod {{ $labels.pod }} in {{ $labels.namespace }} is using more than 0.5 CPU cores for 2+ minutes. Current: {{ $value }}"
+
+        - alert: HighNodeCPU
+          expr: |
+            100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Node {{ $labels.instance }} CPU > 80%"
+            description: "Node {{ $labels.instance }} CPU has been above 80% for 5 minutes."
+
+    # ==============================================
+    # ALERT CASE 2: Pod Crash / Restart Loop
+    # ==============================================
+    - name: pod-health-alerts
+      rules:
+        - alert: PodCrashLooping
+          expr: |
+            increase(kube_pod_container_status_restarts_total[15m]) > 3
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Pod {{ $labels.pod }} crash looping"
+            description: "Pod {{ $labels.pod }} in {{ $labels.namespace }} restarted {{ $value }} times in 15 minutes."
+
+        - alert: PodNotReady
+          expr: |
+            kube_pod_status_phase{phase=~"Pending|Unknown"} == 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Pod {{ $labels.pod }} stuck in {{ $labels.phase }}"
+            description: "Pod {{ $labels.pod }} in {{ $labels.namespace }} has been {{ $labels.phase }} for 5+ minutes."

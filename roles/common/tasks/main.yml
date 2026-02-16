@@ -1,0 +1,142 @@
+---
+# Role: common
+# K8s prerequisites on ALL nodes (master + workers)
+# Tested and proven from proof-of-concept
+
+# --- FIX BROKEN APT CONFIG ---
+- name: Remove corrupted Docker source list
+  file:
+    path: /etc/apt/sources.list.d/docker.list
+    state: absent
+  ignore_errors: yes
+
+# --- SYSTEM CONFIG ---
+- name: Disable Swap (Critical for K8s)
+  shell: |
+    swapoff -a
+    sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+  args:
+    executable: /bin/bash
+
+- name: Load Kernel Modules for Containerd
+  blockinfile:
+    path: /etc/modules-load.d/containerd.conf
+    create: yes
+    block: |
+      overlay
+      br_netfilter
+
+- name: Apply Kernel Modules
+  shell: modprobe overlay && modprobe br_netfilter
+  args:
+    executable: /bin/bash
+
+- name: Configure Sysctl for Kubernetes Networking
+  blockinfile:
+    path: /etc/sysctl.d/99-kubernetes-cri.conf
+    create: yes
+    block: |
+      net.bridge.bridge-nf-call-iptables  = 1
+      net.ipv4.ip_forward                 = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+
+- name: Apply Sysctl Params
+  command: sysctl --system
+
+# --- INSTALL SOFTWARE ---
+# Force locale to avoid French Ubuntu apt prompts
+- name: Set non-interactive apt frontend
+  shell: |
+    export DEBIAN_FRONTEND=noninteractive
+    echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections
+  args:
+    executable: /bin/bash
+
+- name: Install Basic Dependencies
+  apt:
+    name:
+      - curl
+      - gnupg2
+      - software-properties-common
+      - apt-transport-https
+      - ca-certificates
+    state: present
+    update_cache: yes
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+- name: Create keyrings directory
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Download Docker GPG Key
+  get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    mode: '0644'
+    force: true
+
+- name: Add Docker Repository
+  apt_repository:
+    repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+    state: present
+    filename: docker
+
+- name: Download Kubernetes GPG Key
+  get_url:
+    url: https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key
+    dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+    mode: '0644'
+    force: true
+
+- name: Add Kubernetes Repository
+  apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /"
+    state: present
+    filename: kubernetes
+
+- name: Install Containerd
+  apt:
+    name: containerd.io
+    state: present
+    update_cache: yes
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+- name: Configure Containerd to use Systemd Cgroup
+  shell: |
+    mkdir -p /etc/containerd
+    containerd config default | tee /etc/containerd/config.toml
+    sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
+    systemctl restart containerd
+    systemctl enable containerd
+  args:
+    executable: /bin/bash
+
+- name: Install Kubelet, Kubeadm, Kubectl
+  apt:
+    name:
+      - kubelet
+      - kubeadm
+      - kubectl
+    state: present
+    update_cache: yes
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+- name: Hold Kubernetes Packages
+  dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubelet
+    - kubeadm
+    - kubectl
+
+- name: Enable and start kubelet
+  systemd:
+    name: kubelet
+    enabled: yes
+    state: started
