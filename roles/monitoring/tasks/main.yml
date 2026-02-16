@@ -93,6 +93,9 @@
       --namespace monitoring \
       --set prometheus.prometheusSpec.replicas=2 \
       --set prometheus.prometheusSpec.podAntiAffinity="hard" \
+      --set prometheus.prometheusSpec.image.registry=quay.io \
+      --set prometheus.prometheusSpec.image.repository=prometheus/prometheus \
+      --set prometheus.prometheusSpec.image.tag=v2.53.0 \
       --set prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.storageClassName="manual" \
       --set prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage="20Gi" \
       --set 'prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.selector.matchLabels.app=prometheus-pv' \
@@ -102,7 +105,7 @@
       --set alertmanager.service.type=NodePort \
       --set alertmanager.service.nodePort=31000 \
       --wait \
-      --timeout 10m
+      --timeout 15m
   environment:
     KUBECONFIG: /root/.kube/config
   args:
@@ -110,14 +113,14 @@
   when: helm_check.rc != 0
 
 # --- Wait for monitoring pods to be running ---
-- name: Wait for Prometheus pods
+- name: Wait for Prometheus pods to be fully ready
   shell: |
-    kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | grep -c "Running"
+    kubectl get pods -n monitoring -l app.kubernetes.io/instance=monitoring,app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | grep -c '2/2.*Running'
   environment:
     KUBECONFIG: /root/.kube/config
   register: prom_running
-  retries: 30
-  delay: 10
+  retries: 60
+  delay: 15
   until: prom_running.stdout | int >= 1
 
 # --- Deploy Alert Rules (2 cases for grid) ---
