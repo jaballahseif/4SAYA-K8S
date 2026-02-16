@@ -145,13 +145,22 @@
     msg: "{{ alert_rules.stdout_lines }}"
 
 # --- Copy stress test for demo ---
-- name: Copy stress test manifest for alert demo
+# --- Run stress test for demo ---
+- name: Apply stress test to trigger alert automatically
   copy:
     src: stress-test.yml
-    dest: /home/ubuntu/stress-test.yml
-    owner: ubuntu
-    group: ubuntu
+    dest: /tmp/stress-test.yml
     mode: '0644'
+
+- name: Clean up previous stress test
+  command: kubectl delete -f /tmp/stress-test.yml --ignore-not-found=true
+  environment:
+    KUBECONFIG: /root/.kube/config
+
+- name: Deploy stress test pod
+  command: kubectl apply -f /tmp/stress-test.yml
+  environment:
+    KUBECONFIG: /root/.kube/config
 
 # --- Show monitoring pods ---
 - name: Show all monitoring pods
