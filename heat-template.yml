@@ -15,7 +15,7 @@ parameters:
     default: 227bb281-946b-4f21-aaa6-b6f8a6594dc6
     type: string
   tarball_url:
-    default: http://192.168.100.178:8080/v1/AUTH_d6d40703c0df43fda500a9e7071b9129/4SAYA-Project/4SAYA-K8S.tar.gz
+    default: http://192.168.100.178:9000/4SAYA-K8S.tar.gz
     type: string
 
 resources:

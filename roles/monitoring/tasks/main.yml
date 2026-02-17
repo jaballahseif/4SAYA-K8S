@@ -58,6 +58,23 @@
   environment:
     KUBECONFIG: /root/.kube/config
 
+# --- NEW: Create Manual StorageClass (Fix for Missing Prometheus) ---
+- name: Create Manual StorageClass manifest
+  copy:
+    dest: /tmp/manual-sc.yml
+    content: |
+      apiVersion: storage.k8s.io/v1
+      kind: StorageClass
+      metadata:
+        name: manual
+      provisioner: kubernetes.io/no-provisioner
+      volumeBindingMode: WaitForFirstConsumer
+
+- name: Apply Manual StorageClass
+  command: kubectl apply -f /tmp/manual-sc.yml
+  environment:
+    KUBECONFIG: /root/.kube/config
+
 - name: Verify PVs created
   command: kubectl get pv
   environment:
@@ -89,7 +106,7 @@
 
 - name: Install kube-prometheus-stack (Prometheus HA + Grafana)
   shell: |
-    helm install monitoring prometheus-community/kube-prometheus-stack \
+    helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
       --namespace monitoring \
       --set prometheus.prometheusSpec.replicas=2 \
       --set prometheus.prometheusSpec.podAntiAffinity="hard" \
@@ -110,7 +127,6 @@
     KUBECONFIG: /root/.kube/config
   args:
     executable: /bin/bash
-  when: helm_check.rc != 0
 
 # --- Wait for monitoring pods to be running ---
 - name: Wait for Prometheus pods to be fully ready
@@ -123,7 +139,7 @@
   delay: 15
   until: prom_running.stdout | int >= 1
 
-# --- Deploy Alert Rules (2 cases for grid) ---
+# --- Deploy Alert Rules ---
 - name: Copy alert rules manifest
   copy:
     src: alert-rules.yml
@@ -144,7 +160,6 @@
   debug:
     msg: "{{ alert_rules.stdout_lines }}"
 
-# --- Copy stress test for demo ---
 # --- Run stress test for demo ---
 - name: Apply stress test to trigger alert automatically
   copy:
@@ -182,6 +197,5 @@
       - "  Grafana:      http://<NODE_IP>:32000"
       - "    User: admin  Pass: admin"
       - "  Alertmanager: http://<NODE_IP>:31000"
-      - "=========================================="
-      - "  Alert demo: kubectl apply -f ~/stress-test.yml"
+      - "  Prometheus Pods should now be RUNNING!"
       - "=========================================="

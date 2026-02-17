@@ -8,20 +8,18 @@ metadata:
     app: kube-prometheus-stack
 spec:
   groups:
-    # ==============================================
-    # ALERT CASE 1: High CPU Usage (Node + Pod)
-    # ==============================================
     - name: cpu-alerts
       rules:
+        # Lowered threshold to 0.1 and time to 1m for fast Demo triggers
         - alert: HighPodCPU
           expr: |
-            sum(rate(container_cpu_usage_seconds_total{container!="", container!="POD"}[5m])) by (pod, namespace) > 0.5
-          for: 2m
+            sum(rate(container_cpu_usage_seconds_total{container!="", container!="POD"}[1m])) by (pod, namespace) > 0.1
+          for: 1m
           labels:
             severity: warning
           annotations:
             summary: "High CPU on pod {{ $labels.pod }}"
-            description: "Pod {{ $labels.pod }} in {{ $labels.namespace }} is using more than 0.5 CPU cores for 2+ minutes. Current: {{ $value }}"
+            description: "Pod {{ $labels.pod }} in {{ $labels.namespace }} is using more than 0.1 CPU cores for 1+ minutes. Current: {{ $value }}"
 
         - alert: HighNodeCPU
           expr: |
@@ -33,9 +31,6 @@ spec:
             summary: "Node {{ $labels.instance }} CPU > 80%"
             description: "Node {{ $labels.instance }} CPU has been above 80% for 5 minutes."
 
-    # ==============================================
-    # ALERT CASE 2: Pod Crash / Restart Loop
-    # ==============================================
     - name: pod-health-alerts
       rules:
         - alert: PodCrashLooping

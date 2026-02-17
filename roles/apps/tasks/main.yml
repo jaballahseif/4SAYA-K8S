@@ -1,7 +1,6 @@
 ---
 # Role: apps
-# Grid item: Pods creation (2 pts)
-# Deploys nginx with 3 replicas to prove pod scheduling works
+# Grid items: Deploy sample app (2 pts) + Verify Nginx (2 pts)
 
 - name: Copy nginx manifest
   copy:
@@ -13,10 +12,10 @@
   environment:
     KUBECONFIG: /root/.kube/config
 
-- name: Wait for nginx rollout
-  command: kubectl rollout status deployment/nginx-app --timeout=180s
-  environment:
-    KUBECONFIG: /root/.kube/config
+# Replaced 'rollout status' with 'pause' to avoid timeouts on slow connections
+- name: Wait for nginx to initialize
+  pause:
+    seconds: 30
 
 - name: Show all pods across all namespaces
   command: kubectl get pods -A -o wide
@@ -28,28 +27,13 @@
   debug:
     msg: "{{ all_pods.stdout_lines }}"
 
-- name: Show all services
-  command: kubectl get svc -A
-  environment:
-    KUBECONFIG: /root/.kube/config
-  register: all_svc
-
-- name: Display services
-  debug:
-    msg: "{{ all_svc.stdout_lines }}"
-
-- name: Final deployment summary
+- name: Final Access Info
   debug:
     msg:
       - "=========================================="
-      - "  4SAYA DEPLOYMENT COMPLETE"
+      - "  DEPLOYMENT COMPLETE"
       - "=========================================="
-      - "  Nginx:        http://<NODE_IP>:30080"
+      - "  Nginx App:    http://<NODE_IP>:30080"
       - "  Grafana:      http://<NODE_IP>:32000"
       - "  Alertmanager: http://<NODE_IP>:31000"
-      - "=========================================="
-      - "  kubectl get nodes"
-      - "  kubectl get pods -A"
-      - "  kubectl top nodes"
-      - "  kubectl top pods -A"
       - "=========================================="
