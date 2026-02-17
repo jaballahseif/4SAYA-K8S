@@ -1,0 +1,412 @@
+description: 4SAYA Phase 3 - Validation Stack (10.0.2.x subnet)
+heat_template_version: '2015-10-15'
+
+parameters:
+  controller_pub_key:
+    default: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOIW7/0Aecyb+/69OfJn7lKOhGTq6MEq7f5T3VXkgM6B root@controller
+    type: string
+  ext_net:
+    default: 6c643990-fd21-4569-9fe2-cc87d96bfd15
+    type: string
+  flavor:
+    default: m1.medium
+    type: string
+  image:
+    default: 227bb281-946b-4f21-aaa6-b6f8a6594dc6
+    type: string
+  tarball_url:
+    default: http://192.168.100.178:9000/4SAYA-K8S.tar.gz
+    type: string
+
+resources:
+
+  # ===================== NETWORKING (NEW SUBNET) =====================
+  internal_net:
+    type: OS::Neutron::Net
+
+  internal_subnet:
+    properties:
+      cidr: 10.0.2.0/24  # CHANGED CIDR
+      dns_nameservers:
+        - 8.8.8.8
+      network_id:
+        get_resource: internal_net
+    type: OS::Neutron::Subnet
+
+  router:
+    properties:
+      external_gateway_info:
+        network:
+          get_param: ext_net
+    type: OS::Neutron::Router
+
+  router_iface:
+    properties:
+      router_id:
+        get_resource: router
+      subnet_id:
+        get_resource: internal_subnet
+    type: OS::Neutron::RouterInterface
+
+  # UDP is required for Flannel VXLAN (port 8472) and CoreDNS
+  sec_group:
+    properties:
+      rules:
+        - port_range_max: 65535
+          port_range_min: 1
+          protocol: tcp
+          remote_ip_prefix: 0.0.0.0/0
+        - port_range_max: 65535
+          port_range_min: 1
+          protocol: udp
+          remote_ip_prefix: 0.0.0.0/0
+        - protocol: icmp
+          remote_ip_prefix: 0.0.0.0/0
+    type: OS::Neutron::SecurityGroup
+
+  # ===================== PORTS (NEW IP RANGE) =====================
+  port_m:
+    properties:
+      fixed_ips:
+        - ip_address: 10.0.2.10  # CHANGED IP
+      network_id:
+        get_resource: internal_net
+      security_groups:
+        - get_resource: sec_group
+    type: OS::Neutron::Port
+
+  port_w1:
+    properties:
+      fixed_ips:
+        - ip_address: 10.0.2.11  # CHANGED IP
+      network_id:
+        get_resource: internal_net
+      security_groups:
+        - get_resource: sec_group
+    type: OS::Neutron::Port
+
+  port_w2:
+    properties:
+      fixed_ips:
+        - ip_address: 10.0.2.12  # CHANGED IP
+      network_id:
+        get_resource: internal_net
+      security_groups:
+        - get_resource: sec_group
+    type: OS::Neutron::Port
+
+  # ===================== FLOATING IPs =====================
+  fip_m:
+    properties:
+      floating_network:
+        get_param: ext_net
+    type: OS::Neutron::FloatingIP
+
+  fip_w1:
+    properties:
+      floating_network:
+        get_param: ext_net
+    type: OS::Neutron::FloatingIP
+
+  fip_w2:
+    properties:
+      floating_network:
+        get_param: ext_net
+    type: OS::Neutron::FloatingIP
+
+  assoc_m:
+    depends_on: router_iface
+    properties:
+      floatingip_id:
+        get_resource: fip_m
+      port_id:
+        get_resource: port_m
+    type: OS::Neutron::FloatingIPAssociation
+
+  assoc_w1:
+    depends_on: router_iface
+    properties:
+      floatingip_id:
+        get_resource: fip_w1
+      port_id:
+        get_resource: port_w1
+    type: OS::Neutron::FloatingIPAssociation
+
+  assoc_w2:
+    depends_on: router_iface
+    properties:
+      floatingip_id:
+        get_resource: fip_w2
+      port_id:
+        get_resource: port_w2
+    type: OS::Neutron::FloatingIPAssociation
+
+  # ===================== CINDER VOLUMES =====================
+  vol_m:
+    properties:
+      name: vol-master-val  # Different name
+      size: 30
+    type: OS::Cinder::Volume
+
+  vol_w1:
+    properties:
+      name: vol-worker-1-val  # Different name
+      size: 30
+    type: OS::Cinder::Volume
+
+  vol_w2:
+    properties:
+      name: vol-worker-2-val  # Different name
+      size: 30
+    type: OS::Cinder::Volume
+
+  att_m:
+    properties:
+      instance_uuid:
+        get_resource: k8s_master
+      volume_id:
+        get_resource: vol_m
+    type: OS::Cinder::VolumeAttachment
+
+  att_w1:
+    properties:
+      instance_uuid:
+        get_resource: k8s_worker_1
+      volume_id:
+        get_resource: vol_w1
+    type: OS::Cinder::VolumeAttachment
+
+  att_w2:
+    properties:
+      instance_uuid:
+        get_resource: k8s_worker_2
+      volume_id:
+        get_resource: vol_w2
+    type: OS::Cinder::VolumeAttachment
+
+  # ===================== WORKER 1 =====================
+  k8s_worker_1:
+    properties:
+      config_drive: true
+      flavor:
+        get_param: flavor
+      image:
+        get_param: image
+      key_name: mykey
+      name: k8s-worker-1-val  # Different name
+      networks:
+        - port:
+            get_resource: port_w1
+      user_data:
+        str_replace:
+          params:
+            $PUB_KEY:
+              get_param: controller_pub_key
+          template: |
+            #!/bin/bash
+            # Worker 1 - Only SSH setup. K8s installed by Ansible from master.
+            echo "ubuntu:password" | chpasswd
+            sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+            sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+            echo "PasswordAuthentication yes" > /etc/ssh/sshd_config.d/60-cloud-init-override.conf
+            systemctl restart ssh
+            mkdir -p /home/ubuntu/.ssh
+            echo "$PUB_KEY" >> /home/ubuntu/.ssh/authorized_keys
+            chmod 600 /home/ubuntu/.ssh/authorized_keys
+            chown -R ubuntu:ubuntu /home/ubuntu/.ssh
+      user_data_format: RAW
+    type: OS::Nova::Server
+
+  # ===================== WORKER 2 =====================
+  k8s_worker_2:
+    properties:
+      config_drive: true
+      flavor:
+        get_param: flavor
+      image:
+        get_param: image
+      key_name: mykey
+      name: k8s-worker-2-val  # Different name
+      networks:
+        - port:
+            get_resource: port_w2
+      user_data:
+        str_replace:
+          params:
+            $PUB_KEY:
+              get_param: controller_pub_key
+          template: |
+            #!/bin/bash
+            # Worker 2 - Only SSH setup. K8s installed by Ansible from master.
+            echo "ubuntu:password" | chpasswd
+            sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+            sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+            echo "PasswordAuthentication yes" > /etc/ssh/sshd_config.d/60-cloud-init-override.conf
+            systemctl restart ssh
+            mkdir -p /home/ubuntu/.ssh
+            echo "$PUB_KEY" >> /home/ubuntu/.ssh/authorized_keys
+            chmod 600 /home/ubuntu/.ssh/authorized_keys
+            chown -R ubuntu:ubuntu /home/ubuntu/.ssh
+      user_data_format: RAW
+    type: OS::Nova::Server
+
+  # ===================== MASTER NODE =====================
+  k8s_master:
+    properties:
+      config_drive: true
+      flavor:
+        get_param: flavor
+      image:
+        get_param: image
+      key_name: mykey
+      name: k8s-master-val  # Different name
+      networks:
+        - port:
+            get_resource: port_m
+      user_data:
+        str_replace:
+          params:
+            $PUB_KEY:
+              get_param: controller_pub_key
+            $TARBALL:
+              get_param: tarball_url
+          template: |
+            #!/bin/bash
+            # ============================================
+            # 4SAYA Master - Validation Deployment (10.0.2.x)
+            # Logs: /var/log/4saya-deploy.log
+            # ============================================
+            exec > /var/log/4saya-deploy.log 2>&1
+            set -x
+
+            echo "=== DEPLOYMENT STARTED AT $(date) ==="
+
+            # --- 1. SSH CONFIG ---
+            echo "ubuntu:password" | chpasswd
+            sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+            sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+            echo "PasswordAuthentication yes" > /etc/ssh/sshd_config.d/60-cloud-init-override.conf
+            systemctl restart ssh
+
+            # --- 2. CONTROLLER KEY ---
+            mkdir -p /home/ubuntu/.ssh
+            echo "$PUB_KEY" >> /home/ubuntu/.ssh/authorized_keys
+            chmod 600 /home/ubuntu/.ssh/authorized_keys
+            chown -R ubuntu:ubuntu /home/ubuntu/.ssh
+
+            # --- 3. INSTALL ANSIBLE + SSHPASS ---
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y ansible sshpass wget tar
+
+            # --- 4. DOWNLOAD PROJECT ---
+            cd /root
+            wget -q $TARBALL -O 4SAYA-K8S.tar.gz
+            tar -xzf 4SAYA-K8S.tar.gz
+            cd 4SAYA-K8S
+            
+            # --- UPDATE INVENTORY TO MATCH NEW IPs (10.0.1.x -> 10.0.2.x) ---
+            sed -i 's/10.0.1/10.0.2/g' inventory
+            # Also update roles where IPs might be hardcoded (e.g. master/worker tasks)
+            grep -rl "10.0.1" roles/ | xargs sed -i 's/10.0.1/10.0.2/g'
+            
+            echo "=== UPDATED INVENTORY ==="
+            cat inventory
+            echo "================="
+
+            # --- 5. WAIT FOR WORKERS SSH TO BE READY ---
+            # Using updated IP range
+            echo "Waiting for workers to accept SSH..."
+            for HOST in 10.0.2.11 10.0.2.12; do
+              READY=0
+              for ATTEMPT in $(seq 1 60); do
+                if sshpass -p password ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@$HOST echo "SSH_OK" 2>/dev/null; then
+                  echo ">>> $HOST is reachable (attempt $ATTEMPT)"
+                  READY=1
+                  break
+                fi
+                echo "Attempt $ATTEMPT/60: $HOST not ready, waiting 10s..."
+                sleep 10
+              done
+              if [ $READY -eq 0 ]; then
+                echo "ERROR: $HOST never became reachable!"
+              fi
+            done
+
+            # Extra buffer for cloud-init to fully finish on workers
+            sleep 30
+
+            # --- 6. RUN ANSIBLE DEPLOYMENT ---
+            echo "=== STARTING ANSIBLE AT $(date) ==="
+            export ANSIBLE_HOST_KEY_CHECKING=False
+            cd /root/4SAYA-K8S
+
+            ansible-playbook -i inventory site.yml -v 2>&1
+
+            echo "=== DEPLOYMENT FINISHED AT $(date) ==="
+
+            # --- 7. SHOW FINAL STATUS ---
+            export KUBECONFIG=/root/.kube/config
+            echo "=== NODES ==="
+            kubectl get nodes -o wide 2>/dev/null
+            echo "=== PODS ==="
+            kubectl get pods -A -o wide 2>/dev/null
+            echo "=== SERVICES ==="
+            kubectl get svc -A 2>/dev/null
+      user_data_format: RAW
+    type: OS::Nova::Server
+
+outputs:
+  master_floating_ip:
+    description: Master node floating IP (SSH + Grafana + Nginx)
+    value:
+      get_attr:
+        - fip_m
+        - floating_ip_address
+
+  worker1_floating_ip:
+    description: Worker 1 floating IP
+    value:
+      get_attr:
+        - fip_w1
+        - floating_ip_address
+
+  worker2_floating_ip:
+    description: Worker 2 floating IP
+    value:
+      get_attr:
+        - fip_w2
+        - floating_ip_address
+
+  grafana_url:
+    description: "Grafana URL (admin/admin)"
+    value:
+      str_replace:
+        params:
+          $IP:
+            get_attr:
+              - fip_m
+              - floating_ip_address
+        template: "http://$IP:32000"
+
+  alertmanager_url:
+    description: "Alertmanager URL"
+    value:
+      str_replace:
+        params:
+          $IP:
+            get_attr:
+              - fip_m
+              - floating_ip_address
+        template: "http://$IP:31000"
+
+  nginx_url:
+    description: "Nginx app URL"
+    value:
+      str_replace:
+        params:
+          $IP:
+            get_attr:
+              - fip_m
+              - floating_ip_address
+        template: "http://$IP:30080"
