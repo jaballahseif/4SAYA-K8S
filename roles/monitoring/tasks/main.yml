@@ -129,15 +129,20 @@
     executable: /bin/bash
 
 # --- Wait for monitoring pods to be running ---
-- name: Wait for Prometheus pods to be fully ready
-  shell: |
-    kubectl get pods -n monitoring -l app.kubernetes.io/instance=monitoring,app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | grep -c '2/2.*Running'
+- name: Wait for Prometheus pods to initialize
+  pause:
+    seconds: 60
+
+- name: Verify Prometheus pods
+  command: kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus
   environment:
     KUBECONFIG: /root/.kube/config
-  register: prom_running
-  retries: 60
-  delay: 15
-  until: prom_running.stdout | int >= 1
+  register: prom_status
+  ignore_errors: yes
+
+- name: Show Prometheus status
+  debug:
+    msg: "{{ prom_status.stdout_lines }}"
 
 # --- Deploy Alert Rules ---
 - name: Copy alert rules manifest

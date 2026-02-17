@@ -1,0 +1,227 @@
+---
+- name: HPA Scenario deployment started
+  debug:
+    msg: "🤖 Starting HPA AI Autoscaling Scenario deployment..."
+
+###########################################
+# STEP 1: Install Metrics Server
+###########################################
+- name: Check if metrics-server exists
+  shell: kubectl get deployment metrics-server -n kube-system
+  register: metrics_check
+  ignore_errors: yes
+  changed_when: false
+
+- name: Download metrics-server manifest
+  get_url:
+    url: https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+    dest: /tmp/metrics-server.yaml
+    mode: '0644'
+  when: metrics_check.rc != 0
+
+- name: Install metrics-server
+  shell: kubectl apply -f /tmp/metrics-server.yaml
+  when: metrics_check.rc != 0
+
+- name: Patch metrics-server for insecure TLS (lab environment)
+  shell: |
+    kubectl patch deployment metrics-server -n kube-system --type='json' \
+      -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
+  when: metrics_check.rc != 0
+
+- name: Wait for metrics-server to be ready
+  shell: kubectl wait --for=condition=available --timeout=300s deployment/metrics-server -n kube-system
+  register: metrics_wait
+  retries: 3
+  delay: 15
+  until: metrics_wait.rc == 0
+  when: metrics_check.rc != 0
+
+- name: Verify metrics-server is working
+  shell: kubectl top nodes
+  register: metrics_test
+  until: metrics_test.rc == 0
+  retries: 12
+  delay: 10
+
+- name: Display metrics-server status
+  debug:
+    msg: "✅ Metrics-server installed and operational"
+
+###########################################
+# STEP 2: Deploy Demo Application
+###########################################
+- name: Copy PHP Apache application manifest
+  copy:
+    src: php-apache-app.yaml
+    dest: /tmp/php-apache-app.yaml
+
+- name: Deploy PHP Apache application
+  shell: kubectl apply -f /tmp/php-apache-app.yaml
+
+- name: Wait for application pod to be ready
+  shell: kubectl wait --for=condition=ready pod -l app={{ app_name }} -n {{ namespace }} --timeout=180s
+  register: pod_wait
+  retries: 3
+  delay: 10
+  until: pod_wait.rc == 0
+
+- name: Display app deployment status
+  debug:
+    msg: "✅ Demo application deployed successfully"
+
+###########################################
+# STEP 3: Create HPA
+###########################################
+- name: Copy Horizontal Pod Autoscaler manifest
+  copy:
+    src: hpa-config.yaml
+    dest: /tmp/hpa-config.yaml
+
+- name: Apply HPA configuration
+  shell: kubectl apply -f /tmp/hpa-config.yaml
+
+- name: Wait for HPA to initialize
+  shell: kubectl get hpa {{ app_name }}-hpa -n {{ namespace }}
+  register: hpa_check
+  until: hpa_check.rc == 0
+  retries: 5
+  delay: 5
+
+- name: Get HPA status
+  shell: kubectl describe hpa {{ app_name }}-hpa -n {{ namespace }}
+  register: hpa_status
+
+- name: Display HPA status
+  debug:
+    msg: "✅ HPA configured and active"
+
+###########################################
+# STEP 4: Add Prometheus Alert Rules
+###########################################
+- name: Check Prometheus Operator
+  shell: kubectl get prometheusrule -n {{ monitoring_namespace }}
+  register: prom_operator
+  ignore_errors: yes
+  changed_when: false
+
+- name: Copy HPA Prometheus alerts
+  copy:
+    src: hpa-prometheus-alerts.yaml
+    dest: /tmp/hpa-prometheus-alerts.yaml
+  when: prom_operator.rc == 0
+
+- name: Apply Prometheus alerts
+  shell: kubectl apply -f /tmp/hpa-prometheus-alerts.yaml
+  when: prom_operator.rc == 0
+
+- name: Display alerts status
+  debug:
+    msg: "✅ Prometheus alert rules created (2 cases: ScaleUp + MaxCapacity)"
+  when: prom_operator.rc == 0
+
+###########################################
+# STEP 5: Create Grafana Dashboard
+###########################################
+- name: Copy Grafana dashboard JSON
+  copy:
+    src: hpa-dashboard.json
+    dest: /tmp/hpa-dashboard.json
+
+- name: Display dashboard info
+  debug:
+    msg:
+      - "✅ Grafana dashboard JSON created"
+      - "📍 Location: /tmp/hpa-dashboard.json"
+      - "📊 Import manually in Grafana UI"
+
+###########################################
+# STEP 6: Create Demo Scripts
+###########################################
+- name: Copy automated demo script
+  copy:
+    src: hpa-demo.sh
+    dest: /root/hpa-demo.sh
+    mode: '0755'
+
+- name: Copy quick monitoring script
+  copy:
+    src: watch-hpa.sh
+    dest: /root/watch-hpa.sh
+    mode: '0755'
+
+- name: Copy manual load script
+  copy:
+    src: start-load.sh
+    dest: /root/start-load.sh
+    mode: '0755'
+
+- name: Copy stop load script
+  copy:
+    src: stop-load.sh
+    dest: /root/stop-load.sh
+    mode: '0755'
+
+###########################################
+# STEP 7: Final Verification
+###########################################
+- name: Get final HPA status
+  shell: kubectl get hpa -o wide
+  register: final_hpa
+
+- name: Get pods status
+  shell: kubectl get pods -l app={{ app_name }}
+  register: final_pods
+
+- name: Get metrics
+  shell: kubectl top pods -l app={{ app_name }}
+  register: pod_metrics
+  ignore_errors: yes
+
+- name: Display final deployment summary
+  debug:
+    msg:
+      - "════════════════════════════════════════════════════════════"
+      - "  ✅ HPA AI AUTOSCALING SCENARIO DEPLOYED"
+      - "════════════════════════════════════════════════════════════"
+      - ""
+      - "📦 DEPLOYED COMPONENTS:"
+      - "   ✓ Metrics-server (resource monitoring)"
+      - "   ✓ Demo app: {{ app_name }}"
+      - "   ✓ HPA: {{ app_name }}-hpa"
+      - "   ✓ Prometheus alerts (2 cases)"
+      - "   ✓ Grafana dashboard JSON"
+      - "   ✓ Demo scripts"
+      - ""
+      - "🎚️ HPA CONFIGURATION:"
+      - "   Min Replicas: {{ hpa_min_replicas }}"
+      - "   Max Replicas: {{ hpa_max_replicas }}"
+      - "   CPU Target: {{ hpa_cpu_target }}%"
+      - ""
+      - "🔔 PROMETHEUS ALERTS (2 Required Cases):"
+      - "   1. HPAScalingUp - Fires when AI scales up"
+      - "   2. HPAMaxCapacity - Fires at max replicas"
+      - ""
+      - "🎬 DEMO SCRIPTS (in /root/):"
+      - "   ./hpa-demo.sh       - Full automated demo"
+      - "   ./watch-hpa.sh      - Real-time monitoring"
+      - "   ./start-load.sh     - Manual load test"
+      - "   ./stop-load.sh      - Stop all load"
+      - ""
+      - "📊 GRAFANA DASHBOARD:"
+      - "   File: /tmp/hpa-dashboard.json"
+      - "   Import in Grafana UI → Dashboards → Import"
+      - ""
+      - "✅ VERIFICATION COMMANDS:"
+      - "   kubectl get hpa"
+      - "   kubectl top pods"
+      - "   kubectl get prometheusrules -n monitoring"
+      - ""
+      - "🚀 RUN DEMO NOW:"
+      - "   cd /root && ./hpa-demo.sh"
+      - ""
+      - "════════════════════════════════════════════════════════════"
+
+- name: HPA scenario deployment complete
+  debug:
+    msg: "🎉 HPA AI Autoscaling scenario ready for demonstration!"

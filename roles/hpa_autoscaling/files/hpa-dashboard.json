@@ -1,0 +1,108 @@
+{
+  "dashboard": {
+    "title": "🤖 4SAYA - AI Autoscaling (HPA)",
+    "tags": ["4saya", "kubernetes", "hpa", "ai", "autoscaling"],
+    "timezone": "browser",
+    "refresh": "5s",
+    "time": {
+      "from": "now-15m",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "type": "graph",
+        "title": "🧠 AI Decision: Pod Replicas Over Time",
+        "targets": [
+          {
+            "expr": "kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler='php-apache-hpa'}",
+            "legendFormat": "Current Replicas",
+            "refId": "A"
+          },
+          {
+            "expr": "kube_horizontalpodautoscaler_status_desired_replicas{horizontalpodautoscaler='php-apache-hpa'}",
+            "legendFormat": "AI Target Replicas",
+            "refId": "B"
+          }
+        ],
+        "yaxes": [
+          {"format": "short", "label": "Replicas"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 2,
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+        "type": "graph",
+        "title": "📊 CPU Usage (AI Trigger)",
+        "targets": [
+          {
+            "expr": "sum(rate(container_cpu_usage_seconds_total{pod=~'php-apache.*'}[1m])) * 100",
+            "legendFormat": "CPU %"
+          }
+        ],
+        "alert": {
+          "conditions": [
+            {
+              "evaluator": {"params": [50], "type": "gt"},
+              "query": {"params": ["A", "5m", "now"]},
+              "type": "query"
+            }
+          ]
+        }
+      },
+      {
+        "id": 3,
+        "gridPos": {"h": 6, "w": 8, "x": 0, "y": 8},
+        "type": "stat",
+        "title": "Current Replicas",
+        "targets": [
+          {"expr": "kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler='php-apache-hpa'}"}
+        ],
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area"
+        }
+      },
+      {
+        "id": 4,
+        "gridPos": {"h": 6, "w": 8, "x": 8, "y": 8},
+        "type": "gauge",
+        "title": "CPU vs Target",
+        "targets": [
+          {"expr": "kube_horizontalpodautoscaler_status_current_metrics_average_utilization{horizontalpodautoscaler='php-apache-hpa'}"}
+        ]
+      },
+      {
+        "id": 5,
+        "gridPos": {"h": 6, "w": 8, "x": 16, "y": 8},
+        "type": "alertlist",
+        "title": "🚨 HPA Alerts",
+        "options": {
+          "showOptions": "current"
+        }
+      }
+    ],
+    "annotations": {
+      "list": [
+        {
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "ALERTS{alertname='HPAScalingUp'}",
+          "iconColor": "yellow",
+          "name": "Scale UP",
+          "titleFormat": "AI Scaling UP"
+        },
+        {
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "ALERTS{alertname='HPAMaxCapacity'}",
+          "iconColor": "red",
+          "name": "Max Capacity",
+          "titleFormat": "MAX Replicas"
+        }
+      ]
+    }
+  }
+}

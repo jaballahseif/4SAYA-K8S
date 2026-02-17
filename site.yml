@@ -39,3 +39,9 @@
   become: yes
   roles:
     - apps
+
+- name: Deploy HPA AI Autoscaling Scenario
+  hosts: master
+  become: yes
+  roles:
+    - hpa_autoscaling

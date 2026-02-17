@@ -1,0 +1,60 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: hpa-autoscaling-alerts
+  namespace: {{ monitoring_namespace }}
+  labels:
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+  - name: hpa_ai_autoscaling
+    interval: 15s
+    rules:
+    # ALERT CASE 1: HPA Scaling Up
+    - alert: HPAScalingUp
+      expr: |
+        kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler="{{ app_name }}-hpa"} 
+        < 
+        kube_horizontalpodautoscaler_status_desired_replicas{horizontalpodautoscaler="{{ app_name }}-hpa"}
+      for: 30s
+      labels:
+        severity: info
+        scenario: ai_autoscaling
+        team: 4saya
+      annotations:
+        summary: "🤖 AI Decision: HPA is SCALING UP"
+        description: "HPA {{ app_name }}-hpa detected high load and is increasing replicas automatically"
+        current_replicas: "{{ printf \"{{ $value }}\" }}"
+        action: "AI is adding more pods to handle increased traffic"
+    
+    # ALERT CASE 2: HPA at Maximum Capacity
+    - alert: HPAMaxCapacity
+      expr: |
+        kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler="{{ app_name }}-hpa"} 
+        >= 
+        kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler="{{ app_name }}-hpa"}
+      for: 1m
+      labels:
+        severity: warning
+        scenario: ai_autoscaling
+        team: 4saya
+      annotations:
+        summary: "⚠️ AI Alert: HPA reached MAXIMUM capacity"
+        description: "HPA {{ app_name }}-hpa is at maximum replicas ({{ printf \"{{ $value }}\" }})"
+        action: "Consider increasing max replicas or optimizing application performance"
+    
+    # Additional: High CPU Detection
+    - alert: HPAHighCPUDetected
+      expr: |
+        (sum(rate(container_cpu_usage_seconds_total{pod=~"{{ app_name }}.*"}[2m])) 
+        / 
+        sum(kube_pod_container_resource_requests{resource="cpu",pod=~"{{ app_name }}.*"})) * 100 > 80
+      for: 30s
+      labels:
+        severity: info
+        scenario: ai_autoscaling
+        team: 4saya
+      annotations:
+        summary: "📊 High CPU detected - AI will trigger scaling"
+        description: "CPU usage at {{ printf \"{{ $value | humanize }}\" }}% - HPA scaling mechanism activated"

@@ -1,0 +1,7 @@
+---
+app_name: php-apache
+namespace: default
+monitoring_namespace: monitoring
+hpa_min_replicas: 1
+hpa_max_replicas: 10
+hpa_cpu_target: 50

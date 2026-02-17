@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ app_name }}
+  namespace: {{ namespace }}
+  labels:
+    app: {{ app_name }}
+    scenario: ai-autoscaling
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ app_name }}
+  template:
+    metadata:
+      labels:
+        app: {{ app_name }}
+    spec:
+      containers:
+      - name: {{ app_name }}
+        image: registry.k8s.io/hpa-example
+        ports:
+        - containerPort: 80
+          name: http
+        resources:
+          requests:
+            cpu: 200m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ app_name }}
+  namespace: {{ namespace }}
+spec:
+  selector:
+    app: {{ app_name }}
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+  type: ClusterIP
