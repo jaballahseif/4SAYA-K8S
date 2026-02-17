@@ -9,7 +9,7 @@ parameters:
     default: 6c643990-fd21-4569-9fe2-cc87d96bfd15
     type: string
   flavor:
-    default: m1.medium
+    default: m1.small
     type: string
   image:
     default: 227bb281-946b-4f21-aaa6-b6f8a6594dc6
@@ -145,19 +145,19 @@ resources:
   vol_m:
     properties:
       name: vol-master-val  # Different name
-      size: 30
+      size: 10
     type: OS::Cinder::Volume
 
   vol_w1:
     properties:
       name: vol-worker-1-val  # Different name
-      size: 30
+      size: 10
     type: OS::Cinder::Volume
 
   vol_w2:
     properties:
       name: vol-worker-2-val  # Different name
-      size: 30
+      size: 10
     type: OS::Cinder::Volume
 
   att_m:
